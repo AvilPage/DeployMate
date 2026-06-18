@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deploymate"
+version = "0.2.0"
+description = "Single-command, registry-less Docker Compose deploys over SSH"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Anand Reddy Pandikunta", email = "anand@avilpage.com"}
+]
+maintainers = [
+    {name = "Anand Reddy Pandikunta", email = "anand@avilpage.com"}
+]
+keywords = ["deployment", "automation", "devops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+]
+dependencies = [
+    "click>=8.3.1",
+    "fabric>=3.2.2",
+    "loguru>=0.7.3",
+    "pyyaml>=6.0.3",
+]
+
+[project.urls]
+Homepage = "https://github.com/avilpage/deploymate"
+Documentation = "https://github.com/avilpage/deploymate#readme"
+Repository = "https://github.com/avilpage/deploymate"
+Issues = "https://github.com/avilpage/deploymate/issues"
+
+[project.scripts]
+deploymate = "deploymate.cli:deploymate"
+dm = "deploymate.cli:deploymate"
