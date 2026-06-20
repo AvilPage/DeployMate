@@ -214,13 +214,72 @@ def init(context):
 # remote build (no registry)
 # --------------------------------------------------------------------------- #
 
+def _parse_dockerignore(ctx_dir):
+    """Return a list of (negated, pattern) tuples from .dockerignore, if present."""
+    path = os.path.join(ctx_dir, ".dockerignore")
+    rules = []
+    if not os.path.isfile(path):
+        return rules
+    with open(path) as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            negated = line.startswith("!")
+            pattern = line[1:] if negated else line
+            rules.append((negated, pattern.rstrip("/")))
+    return rules
+
+
+
 def _tar_context(ctx_dir):
-    """Pack a build context directory into an in-memory .tar.gz."""
+    """Pack a build context directory into an in-memory .tar.gz, respecting .dockerignore.
+
+    Uses a manual walk so excluded directories are never traversed — avoids
+    scanning Flutter build/ or node_modules/ even when they are excluded.
+    """
+    rules = _parse_dockerignore(ctx_dir)
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(ctx_dir, arcname=".")
+        for root, dirs, files in os.walk(ctx_dir):
+            rel_root = os.path.relpath(root, ctx_dir)
+            if rel_root == ".":
+                rel_root = ""
+
+            # Prune dirs in-place to avoid descending into excluded directories
+            dirs[:] = [
+                d for d in dirs
+                if _is_included(os.path.join(rel_root, d) if rel_root else d, rules)
+            ]
+
+            for fname in files:
+                rel_path = os.path.join(rel_root, fname) if rel_root else fname
+                if _is_included(rel_path, rules):
+                    tar.add(
+                        os.path.join(root, fname),
+                        arcname=os.path.join(".", rel_path),
+                    )
     buf.seek(0)
     return buf
+
+
+def _is_included(rel, rules):
+    """Return True if rel path should be included per .dockerignore rules (last-match wins).
+    With no rules, everything is included.
+    """
+    if not rules:
+        return True
+    import fnmatch
+    excluded = False
+    for negated, pattern in rules:
+        if (
+            fnmatch.fnmatch(rel, pattern)
+            or fnmatch.fnmatch(os.path.basename(rel), pattern)
+            or rel.startswith(pattern + "/")
+            or rel == pattern
+        ):
+            excluded = not negated
+    return not excluded
 
 
 def remote_build(context, service_name, service, version):
@@ -247,9 +306,13 @@ def remote_build(context, service_name, service, version):
     tarball = f"/tmp/dm-{service_name}-{version}.tar.gz"
 
     logger.info("[{}] packing build context {}", service_name, ctx_dir)
-    context.connection.put(_tar_context(ctx_dir), tarball)
+    packed = _tar_context(ctx_dir)
+    size_kb = packed.seek(0, 2) / 1024
+    packed.seek(0)
+    logger.info("[{}] uploading {:.1f} KB to remote", service_name, size_kb)
+    context.connection.put(packed, tarball)
 
-    logger.info("[{}] extracting + building on remote", service_name)
+    logger.info("[{}] extracting + building on remote {}", service_name, remote_dir)
     context.connection.run(f"mkdir -p {remote_dir}", hide=True)
     context.connection.run(f"tar xzf {tarball} -C {remote_dir}", hide=True)
     context.connection.run(f"rm -f {tarball}", hide=True)

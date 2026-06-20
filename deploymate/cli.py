@@ -87,6 +87,13 @@ def _setup(ctx, machine, compose_file, log_level, email):
                format="<level>{level: <8}</level> {message}")
 
     ctx.connection = Connection(machine)
+    try:
+        ctx.connection.open()
+        logger.info("ssh connection to {} succeeded", machine)
+    except Exception as exc:
+        logger.error("ssh connection to {} failed: {}", machine, exc)
+        raise SystemExit(1)
+
     ctx.compose_file = compose_file
     ctx.compose_dir = os.path.dirname(os.path.abspath(compose_file))
     ctx.compose_yaml = core.get_compose(compose_file)
