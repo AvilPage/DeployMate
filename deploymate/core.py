@@ -524,8 +524,50 @@ def build_caddy_config(routes, email=None):
     return config
 
 
+def merge_routes(existing, routes, running):
+    """Keep live routes from other apps; `routes` win on domain clash.
+
+    `existing` is Caddy's current route list, `running` the set of running
+    container names. Routes whose upstream container is gone are dropped.
+    """
+    new_domains = {r["domain"] for r in routes}
+    kept = []
+    for er in existing:
+        try:
+            domain = er["match"][0]["host"][0]
+            container, port = er["handle"][0]["upstreams"][0]["dial"].rsplit(":", 1)
+        except (KeyError, IndexError, ValueError):
+            continue
+        if domain not in new_domains and container in running:
+            kept.append({"domain": domain, "container": container, "port": port})
+    return kept + list(routes)
+
+
+def _live_state(context):
+    """Return (existing caddy routes, running container names); empty on failure."""
+    raw = context.connection.run(
+        f"curl -fsS {ADMIN}/config/apps/http/servers/srv0/routes",
+        hide=True, warn=True,
+    ).stdout
+    try:
+        existing = json.loads(raw) or []
+    except ValueError:
+        existing = []
+    running = set(
+        context.connection.run(
+            "docker ps --format '{{.Names}}'", hide=True, warn=True
+        ).stdout.split()
+    )
+    return existing, running
+
+
 def apply_caddy_routes(context, routes, email=None):
-    """Push the route set to Caddy's admin API, switching live upstreams."""
+    """Push the route set to Caddy's admin API, switching live upstreams.
+
+    Routes of other apps already served by this Caddy are preserved.
+    """
+    existing, running = _live_state(context)
+    routes = merge_routes(existing, routes, running)
     config = build_caddy_config(routes, email)
     remote_json = "/tmp/dm-caddy.json"
     context.connection.put(io.StringIO(json.dumps(config)), remote_json)
